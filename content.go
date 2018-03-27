@@ -133,8 +133,9 @@ func (c *content) compile() error {
 		n := filepath.Base(d)
 		if n == "/" {
 			n = strings.SplitN(filepath.Base(f.Path), ".", 2)[0]
+		} else if n == "." {
+			n = f.Path
 		}
-		fmt.Printf("n = %+v\n", n)
 		if v, ok := f.Metadata["template"]; ok {
 			n = v
 		}
