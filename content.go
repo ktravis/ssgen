@@ -4,13 +4,14 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
 	"text/template"
+	"time"
 
-	"github.com/shurcooL/github_flavored_markdown"
+	"github.com/yuin/goldmark/parser"
+	"go.abhg.dev/goldmark/frontmatter"
 )
 
 type content struct {
@@ -42,7 +43,7 @@ func loadContent() (*content, error) {
 					}
 					c.files = append(c.files, f)
 					dir := filepath.Dir(f.Path)
-					k := strings.Replace(strings.TrimLeft(dir, "/"), "/", ".", -1)
+					k := strings.ReplaceAll(strings.TrimLeft(dir, "/"), "/", ".")
 					if k != "" {
 						c.tree[k] = append(c.tree[k], f)
 					}
@@ -67,7 +68,7 @@ type file struct {
 	src string
 
 	Path     string
-	Metadata map[string]string
+	Metadata map[string]any
 	Content  string
 }
 
@@ -82,41 +83,46 @@ func parseMarkdownFile(path string) (*file, error) {
 	if err != nil {
 		return nil, err
 	}
-	d, err := ioutil.ReadAll(src)
+	d, err := io.ReadAll(src)
 	if err != nil {
 		return nil, err
 	}
 	f := &file{
-		Metadata: make(map[string]string),
+		Metadata: make(map[string]any),
 	}
 	buf := bytes.NewBuffer(d)
-	for {
-		if b := buf.Bytes(); len(b) == 0 || b[0] != '@' {
-			break
-		}
-		line, err := buf.ReadString('\n')
-		if err != nil && err != io.EOF {
-			return nil, err
-		}
-		parts := strings.SplitN(line[1:], "=", 2)
-		k := strings.TrimSpace(parts[0])
-		v := ""
-		if len(parts) == 2 {
-			v = strings.TrimSpace(parts[1])
-		}
-		f.Metadata[k] = v
+	ctx := parser.NewContext()
+	html, err := MarkdownToHtml(ctx, buf.String())
+	if err != nil {
+		return nil, err
 	}
-	f.Content = string(github_flavored_markdown.Markdown(buf.Bytes()))
+	fm := frontmatter.Get(ctx)
+	if fm != nil {
+		if err := fm.Decode(&f.Metadata); err != nil {
+			return nil, fmt.Errorf("could not decode file metadata: %w", err)
+		}
+	} else {
+		fmt.Printf("No metadata for file: %v\n", path)
+	}
+	f.Content = html
 	f.src = path
 	f.Path = strings.TrimRight(fromBase, filepath.Ext(path))
 	dir := filepath.Dir(f.Path)
-	if s, ok := f.Metadata["name"]; ok {
+	if s, ok := f.Metadata["name"].(string); ok {
 		f.Path = filepath.Join(dir, slugify(s))
 	}
-	if s, ok := f.Metadata["slug"]; ok {
+	if s, ok := f.Metadata["slug"].(string); ok {
 		f.Path = filepath.Join(dir, s)
 	}
-	if _, ok := f.Metadata["published"]; !ok {
+	if p, ok := f.Metadata["published"]; ok {
+		switch t := p.(type) {
+		case string:
+		case time.Time:
+			f.Metadata["published"] = t.Format("2006/01/02")
+		default:
+			return nil, fmt.Errorf("unexpected type %T for metadata field 'published'", p)
+		}
+	} else {
 		f.Metadata["published"] = stat.ModTime().Format("2006/01/02")
 	}
 	return f, nil
@@ -131,12 +137,13 @@ func (c *content) compile() error {
 		d := filepath.Dir(f.Path)
 
 		n := filepath.Base(d)
-		if n == "/" {
+		switch n {
+		case "/":
 			n = strings.SplitN(filepath.Base(f.Path), ".", 2)[0]
-		} else if n == "." {
+		case ".":
 			n = f.Path
 		}
-		if v, ok := f.Metadata["template"]; ok {
+		if v, ok := f.Metadata["template"].(string); ok {
 			n = v
 		}
 		if n == "/" {
@@ -146,7 +153,7 @@ func (c *content) compile() error {
 		}
 
 		o := f.Path
-		if s, ok := f.Metadata["slug"]; ok {
+		if s, ok := f.Metadata["slug"].(string); ok {
 			o = filepath.Join(d, s)
 		}
 		index := filepath.Join(*out, o)
@@ -168,7 +175,7 @@ func (c *content) compile() error {
 		if !ok {
 			return fmt.Errorf("cannot find template '%s'", n)
 		}
-		err = t.Execute(w, map[string]interface{}{
+		err = t.Execute(w, map[string]any{
 			"file": f,
 			"root": c.tree,
 		})

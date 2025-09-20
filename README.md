@@ -18,6 +18,8 @@ Usage of ssgen:
     	dir for source markdown (default "src")
   -out dir
     	dir for output (default "build")
+  -reloader
+    	include reloader js code with -serve
   -serve address
     	watch files, build and serve output at address
   -static dir

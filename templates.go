@@ -17,11 +17,15 @@ var (
 		"readmore":  readmore,
 		"slugify":   slugify,
 		"sortItems": sortItems,
+		"reloader":  reloaderSnippet,
 	}
 )
 
-func readmore(body, link string) string {
+func readmore(body, link string, rest ...any) string {
 	lineLimit := 5
+	if len(rest) > 0 && rest[0] != nil {
+		lineLimit = rest[0].(int)
+	}
 
 	lines := strings.Split(body, "\n")
 	if len(lines) <= lineLimit {
@@ -47,9 +51,40 @@ func sortItems(key string, items []*file) []*file {
 	sorted := make([]*file, len(items))
 	copy(sorted, items)
 	sort.Slice(sorted, func(i, j int) bool {
-		return rev != (sorted[i].Metadata[key] < sorted[j].Metadata[key])
+		iv, iok := sorted[i].Metadata[key].(string)
+		jv, jok := sorted[j].Metadata[key].(string)
+		if !(iok && jok) {
+			return i < j
+		}
+
+		return rev != (iv < jv)
 	})
 	return sorted
+}
+
+func reloaderSnippet() string {
+	if !*enableReloader || *serve == "" {
+		return ""
+	}
+	return `
+	<script type="text/javascript">
+	function f() {
+		var scrollpos = sessionStorage.getItem('scrollpos');
+		if (scrollpos) {
+		    window.scrollTo(0, scrollpos);
+		    sessionStorage.removeItem('scrollpos');
+		}
+		const e = new EventSource("/reload");
+		e.addEventListener("reload", () => window.location.reload());
+	}
+	if (document.readyState !== 'loading') { f() } else {
+		document.addEventListener('DOMContentLoaded', f);
+	}
+	window.addEventListener("beforeunload", function (e) {
+		sessionStorage.setItem('scrollpos', window.scrollY);
+	});
+	</script>
+	`
 }
 
 func loadTemplates() (map[string]*template.Template, error) {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"net/http"
 	"os"
 	"path"
@@ -99,4 +100,35 @@ func (fs FileServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	http.ServeContent(w, r, d.Name(), d.ModTime(), f)
+}
+
+type reloader struct {
+	ch <-chan (bool)
+}
+
+func (r reloader) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	fmt.Println("reloader connected")
+
+	flusher := w.(http.Flusher)
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.WriteHeader(http.StatusOK)
+
+	flusher.Flush()
+	ctx := req.Context()
+	for {
+		select {
+		case <-ctx.Done():
+			fmt.Println("client disconnect")
+			return
+		case <-r.ch:
+			fmt.Println("Initiating reload")
+
+			if _, err := w.Write([]byte("event: reload\ndata: \n\n")); err != nil {
+				fmt.Fprintln(os.Stderr, "Error writing event:", err)
+			}
+			flusher.Flush()
+		}
+	}
 }

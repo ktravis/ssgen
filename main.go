@@ -12,15 +12,16 @@ import (
 )
 
 var (
-	in        = flag.String("in", "src", "`dir` for source markdown")
-	out       = flag.String("out", "build", "`dir` for output")
-	templates = flag.String("templates", "templates", "`dir` for input templates")
-	serve     = flag.String("serve", "", "watch files, build and serve output at `address`")
-	static    = flag.String("static", "static", "`dir` containing static files to be served at '/static'")
-	debug     = flag.Bool("debug", false, "print debug messages")
+	in             = flag.String("in", "src", "`dir` for source markdown")
+	out            = flag.String("out", "build", "`dir` for output")
+	templates      = flag.String("templates", "templates", "`dir` for input templates")
+	serve          = flag.String("serve", "", "watch files, build and serve output at `address`")
+	static         = flag.String("static", "static", "`dir` containing static files to be served at '/static'")
+	debug          = flag.Bool("debug", false, "print debug messages")
+	enableReloader = flag.Bool("reloader", false, "include reloader js code with -serve")
 )
 
-func dbg(s string, args ...interface{}) {
+func dbg(s string, args ...any) {
 	if *debug {
 		log.Printf("[debug] "+s, args...)
 	}
@@ -40,6 +41,8 @@ func main() {
 	if err := s.compile(); err != nil {
 		log.Fatal(err)
 	}
+
+	reloadChan := make(chan bool)
 
 	if *serve != "" {
 		watcher, err := fsnotify.NewWatcher()
@@ -79,6 +82,10 @@ func main() {
 						if err := s.compile(); err != nil {
 							log.Printf("compilation error: %v", err)
 						}
+						select {
+						case reloadChan <- true:
+						default:
+						}
 					}
 				case err := <-watcher.Errors:
 					log.Printf("watcher error: %v", err)
@@ -87,6 +94,9 @@ func main() {
 		}()
 
 		http.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir(*static))))
+		if *enableReloader {
+			http.Handle("/reload", reloader{reloadChan})
+		}
 		http.Handle("/", FileServer{http.Dir(*out)})
 		log.Printf("watching files and serving at '%s'", *serve)
 		log.Fatal(http.ListenAndServe(*serve, nil))
